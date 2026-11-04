@@ -21,7 +21,7 @@ Milestone 1 builds the initial scientific-paper corpus from arXiv. Its main goal
 - Record statuses and failures so that the resulting corpus can be inspected and later milestones can consume it.
 - Prepare source material for Milestone 2 (parsing and standardization) and Milestone 3 (reference matching).
 
-This report uses the supplied `my_data/summary.json` and `my_data/papers.csv`. The figures describe the saved export; they do not claim that a new crawl was run while generating this report.
+This report uses the supplied `M1_benchmark/summary.json` and `M1_benchmark/papers.csv`. The figures describe the saved export; they do not claim that a new crawl was run while generating this report.
 
 ```{warning}
 The supplied summary marks this run as `report_only: true` and `measured: false`. The recorded 12.19 seconds is not a cold-start, end-to-end crawl benchmark: discovery is listed as 0 seconds and no single-paper trial is available. Peak/average RAM and peak temporary disk usage were not measured. Those values are therefore reported as unavailable rather than zero.

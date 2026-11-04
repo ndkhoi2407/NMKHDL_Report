@@ -13,3 +13,5 @@ site:
       url: /index
     - title: Milestone 1 — Crawling
       url: /m1_crawling
+    - title: Milestone 2 - Parsing
+      url: /m2_parsing

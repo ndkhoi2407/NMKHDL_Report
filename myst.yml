@@ -1,0 +1,15 @@
+
+version: 1
+
+project:
+  title: Data Science Project
+  description: Data collection and crawling — Milestone 1
+
+site:
+  template: book-theme
+  title: Data Science Project
+  nav:
+    - title: Home
+      url: /index
+    - title: Milestone 1 — Crawling
+      url: /m1_crawling

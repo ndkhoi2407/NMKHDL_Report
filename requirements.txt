@@ -1,0 +1,10 @@
+# Python 3.14; direct dependencies pinned to the validated report environment.
+# The report build never invokes the crawler or parser.
+arxiv==4.0.2
+requests==2.34.2
+jupyter-server==2.21.1
+ipykernel==7.4.0
+pandas==3.1.0
+plotly==7.1.0
+matplotlib==3.11.2
+psutil==7.2.2

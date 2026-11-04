@@ -37,7 +37,7 @@ import pandas as pd
 from IPython.display import display, Markdown
 import report_utils as ru
 
-S = ru.load_json("M2_benchmark /summary.json")
+S = ru.load_json("m2_data/summary.json")
 papers = ru.load_csv("m2_data/papers.csv")
 samples = ru.load_csv("m2_data/samples.csv")
 tables = ru.load_json("m2_data/tables_stats.json")

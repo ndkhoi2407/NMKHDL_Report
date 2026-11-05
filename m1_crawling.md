@@ -9,154 +9,291 @@ kernelspec:
   name: python3
 ---
 
+**Full Name:** Nguyen Tien Thanh  
+**Student ID:** 24127121  
+**Class:** 24KHDL1  
+**Group:** 09  
+---
+
 # Milestone 1 — Crawling
 
 ## 1. Objectives
 
-Milestone 1 builds the initial scientific-paper corpus from arXiv. Its main goals are to:
+Milestone 1 collects scientific papers from arXiv. Its goals are:
 
-- Resolve the assigned arXiv IDs and identify every version of each paper.
-- Download the source archive for each version and determine whether it contains usable LaTeX.
-- Collect publication metadata and reference information using Semantic Scholar.
-- Record statuses and failures so that the resulting corpus can be inspected and later milestones can consume it.
-- Prepare source material for Milestone 2 (parsing and standardization) and Milestone 3 (reference matching).
+- Resolve the arXiv IDs of the assigned range into papers and find **every version** of each paper.
+- Download the full-text **LaTeX sources** of every version (not the PDFs).
+- Crawl the metadata of each paper and the **reference information** of each paper through Semantic Scholar.
+- Keep the download state of every item so that the crawl can be resumed and audited.
+- Prepare the working corpus that Milestone 2 (parsing) and Milestone 3 (matching) consume.
 
-This report uses the supplied `M1_benchmark/summary.json` and `M1_benchmark/papers.csv`. The figures describe the saved export; they do not claim that a new crawl was run while generating this report.
+All numbers and figures on this page are generated while the book is compiled, from the small result files in `m1_data/`
+(`summary.json`, `papers.csv`, `samples.csv`) produced by the benchmark script.
 
-```{warning}
-The supplied summary marks this run as `report_only: true` and `measured: false`. The recorded 12.19 seconds is not a cold-start, end-to-end crawl benchmark: discovery is listed as 0 seconds and no single-paper trial is available. Peak/average RAM and peak temporary disk usage were not measured. Those values are therefore reported as unavailable rather than zero.
+```{code-cell} python
+:tags: [hide-input]
+import pandas as pd
+from IPython.display import display, Markdown
+import report_utils as ru
+
+S = ru.load_json("m1_data/summary.json")
+papers = ru.load_csv("m1_data/papers.csv")
+samples = ru.load_csv("m1_data/samples.csv")
+R, T, M, K, D = (S.get(k) or {} for k in ("run", "timing", "memory", "disk", "data"))
 ```
 
-## 2. Scope and discovery coverage
+```{warning}
+This is a **report-only snapshot**, exported on 28 October 2026. Counts describe the saved corpus, not a new crawl performed for this book. The stored 2,445.05 seconds come from a resumed pipeline run on 27 October: discovery was skipped and the references step exited with code 1. This is **not a cold-start end-to-end benchmark**. There are no RAM samples, peak RAM or peak temporary-disk measurements. Missing measurements are shown as “Not measured”.
+```
+
+## 2. Scope
 
 Audit baseline: [official Milestone 1 specification](https://hcmus-cs-ta.github.io/lab-book/intro-ds/statement/crawling/).
 
-| Measure | Result |
-|---|---:|
-| IDs represented in the saved export | 5,000 |
-| First ID in the export | `2608.19007` |
-| Last ID in the export | `2608.24006` |
-| Papers found on arXiv | 5,000 |
-| IDs not found | 0 |
-| IDs that failed during discovery | 0 |
-| Total versions identified | 6,101 |
+```{code-cell} python
+:tags: [hide-input]
+args = R.get("args") or {}
+display(ru.kv_table([
+    ("Prefix", args.get("prefix")),
+    ("Start ID", args.get("start")),
+    ("End ID", args.get("end")),
+    ("IDs in the assigned range", ru.num(D.get("ids_in_range"), 0)),
+    ("Papers found on arXiv", ru.num(D.get("papers_found"), 0)),
+    ("IDs not found", ru.num(D.get("ids_not_found"), 0)),
+    ("IDs that failed during discovery", ru.num(D.get("ids_failed_in_discovery"), 0)),
+]))
+```
 
-The export covers 5,000 consecutive IDs from `2608.19007` through `2608.24006`. All 5,000 IDs are represented as paper rows, and the summary reports no missing IDs or discovery failures. The corpus contains more versions than papers because many papers have revised versions.
+## 3. Implementation
 
-## 3. Implementation overview
+### 3.1 Pipeline
 
-The summary and per-paper CSV are consistent with a crawling workflow that separates publication discovery, source downloads, metadata, and references. The supplied files are result exports rather than the source-code repository, so the exact implementation details of each program cannot be independently verified from these files alone.
+The crawler is a sequence of independent programs, run end to end by a driver script (`main.py`):
 
-| Pipeline concern | Evidence in the supplied data | Why it matters |
+| Step | Program | What it does |
 |---|---|---|
-| Discovery | One row per paper ID; 5,000 papers found | Establishes the corpus scope and coverage. |
-| Version downloads | Per-paper version counts and version-status totals | Captures the fact that a paper can have multiple source snapshots. |
-| TeX availability | `tex_ok` and version status fields | Identifies which papers can proceed to LaTeX parsing. |
-| Publication metadata | `metadata_ok` | Tracks whether core paper metadata was obtained. |
-| References | `references_status`, `total_refs`, `refs_with_arxiv_id`, and `refs_metadata_ok` | Records reference coverage and metadata quality. |
-| Storage | Archive, pre-cleanup, and post-cleanup byte counts | Helps quantify storage requirements and the effect of cleanup. |
+| `discover` | `discover.py` | Resolves the assigned IDs through the arXiv API, keeps the IDs that exist and reads the number of versions of each paper from the version suffix of the latest identifier. |
+| `download` | `download_sources.py` | Downloads and extracts the source archive of **each version** individually. |
+| `clean` | `process_sources.py` | Historical cleanup removed recognised binary figures while retaining other resources. Corrected tar/ZIP extraction admits only `.tex` and `.bib` before writing; original TeX bytes are preserved. LaTeX figure commands (`figure` environments, `\includegraphics`) stay untouched in the TeX files. |
+| `metadata` | `metadata.py` | Writes publication-level `metadata.json`: title, authors, submission and revision dates. Corrected code preserves venue/journal references when supplied and writes actual versioned snapshots with explicit provenance; historical exports remain unchanged. |
+| `references` | `references.py` | Writes `references.json` for each paper from the Semantic Scholar API. |
 
-## 4. Results and coverage
+Every step skips the work it has already done, so an interrupted run is simply started again. The driver records
+the duration of each step in `timings.json`, and a step that fails stops the run with a non-zero exit code.
+The discovery step is skipped automatically when `discovery.json` is already complete for the requested range.
 
-### 4.1 Version and download status
+A version whose source is not TeX (PDF only, another format, or an archive without `.tex`) is **kept as an empty record** instead of being dropped,
+so coverage statistics reflect reality. The download status of each version is stored in `download_status.json`.
 
-| Version outcome | Count |
-|---|---:|
-| Total versions | 6,101 |
-| `ok` | 5,767 |
-| PDF-only | 311 |
-| Error | 23 |
+### 3.2 Tools and libraries
 
-The version-status counts sum to 6,101. Most versions have status `ok`, while 311 are PDF-only and 23 have an error status. A PDF-only version may still represent a successfully retrieved paper version, but it does not provide the LaTeX source required for a source-parsing workflow.
+- **arXiv API** through the `arxiv` Python client, using the modern `client.results(search)` style. The client enforces a delay of 3 seconds between calls,
+  in line with the API etiquette, and requests go through one connection at a time with a descriptive `User-Agent`.
+- **Semantic Scholar Graph API** through `requests`, with a free API key (read from the `S2_API_KEY` environment variable).
+- **psutil** for the performance measurements (RAM sampling of the whole process tree).
 
-At publication level, 4,978 of 5,000 papers are marked as successfully scraped, giving an overall success rate of **99.56%**. The summary reports a download success rate of 99.56% as well.
+### 3.3 Reference crawling
 
-### 4.2 TeX and metadata coverage
+For every paper, the Semantic Scholar record is requested with the fields `paperId`, `title`, `authors`, `year`, `externalIds`, `publicationDate` and `venue` of each reference.
 
-| Measure | Count | Rate |
-|---|---:|---:|
-| Papers with TeX available | 4,698 / 5,000 | 93.96% |
-| Papers with metadata | 5,000 / 5,000 | 100% |
-| Papers with a Semantic Scholar record | 4,998 / 5,000 | 99.96% |
-| Papers without a Semantic Scholar record | 2 / 5,000 | 0.04% |
+- Papers are queried in **batches** (the batch endpoint, 50 papers per request), which keeps the number of requests low and avoids rate limiting.
+- A reference becomes a *row of the references table* only if `externalIds` contains an `ArXiv` key. Its identifier is normalised to the `yymm-id` form;
+  old-style identifiers published before 2007 (for example `hep-th/9901001`) are kept as they are.
+- The current code supports non-arXiv references by default, but this does not establish preservation in the existing corpus. Its resume logic skips completed reference files; see the read-only corpus audit below for actual retained rows.
+- The **submission date** of a reference with an arXiv ID is read from the arXiv API (the date of version 1), in batches of 100 IDs with a persistent cache.
+  If arXiv does not return the paper, the `publicationDate` of Semantic Scholar is used instead.
+- HTTP 429 and server errors are retried with exponential backoff that honours the `Retry-After` header. An invalid API key (HTTP 401/403) stops the program with a clear message
+  instead of marking every paper as failed.
 
-The TeX coverage rate is lower than the scrape success rate. This distinction is important: successful crawling does not guarantee that a version contains parsable LaTeX. The CSV reports 302 papers without `tex_ok`, and 275 rows have missing pre- and post-cleanup size values. Those missing size values should not be treated as zero-byte papers; they are consistent with the absence of a measured extracted-source size for those rows.
+### 3.4 Data organisation
 
-### 4.3 Paper size before and after cleanup
+One working folder per paper is created under `data/`:
 
-The summary reports the following average sizes across the corpus:
+```text
+data/
+|-- discovery.json            # resolved IDs and version lists
+|-- download_status.json      # status of every version
+|-- metadata_status.json
+|-- references_status.json
+|-- timings.json
+`-- 2607-03694/               # one folder per publication
+    |-- v1/, v2/, ...         # .tex and .bib files of each version
+    |-- metadata.json
+    `-- references.json
+```
 
-| Measure | Bytes | Approx. MiB |
-|---|---:|---:|
-| Average paper size before cleanup | 4,609,968.76 | 4.40 |
-| Average paper size after cleanup | 396,470.09 | 0.38 |
-| Average version size before cleanup | 3,777,024.86 | 3.60 |
-| Average version size after cleanup | 324,834.60 | 0.31 |
-| Average compressed archive size per paper | 3,767,684.88 | 3.59 |
+The folder layout above is supported by `download_sources.py` and the version-directory resolver in `parse.py`.
 
-Based on the reported average paper sizes, the reduction is approximately **91.4%**. This suggests that cleanup substantially reduces the storage footprint of the extracted corpus. The supplied summary describes the size change but does not include enough source code to independently verify exactly which file types were removed, so this report does not assume a particular cleanup implementation.
+## 4. Results
 
-The final corpus size reported in `summary.json` is **1,910,890,368 bytes (about 1.78 GiB)**. The whole data directory is reported as 1,917,996,688 bytes (about 1.79 GiB). These are saved disk-size figures, not peak temporary disk usage during crawling.
+The [official-requirements audit](crawling_stats.md) records unmet source-only extraction, venue and per-version provenance requirements. A single publication-level metadata/reference file is not evidence of a separate snapshot for every version. Non-arXiv reference preservation must be assessed from the retained data, not from the current crawler's defaults.
 
-### 4.4 Reference collection
+### 4.1 Overview
 
-| Measure | Result |
-|---|---:|
-| Average references returned per paper | 32.38 |
-| Average references with an arXiv ID per paper | 15.41 |
-| Total references returned (sum of CSV rows) | 161,850 |
-| Total arXiv-linked references in the CSV | 77,034 |
-| Saved arXiv-linked references | 77,034 |
-| Saved arXiv-linked references with metadata marked complete | 77,034 |
-| Overall metadata success rate for the saved arXiv-linked references | 100% |
+```{code-cell} python
+:tags: [hide-input]
+status_counts = D.get("versions_by_status") or {}
+rows = [("Papers discovered", ru.num(D.get("papers_found"), 0)),
+        ("Versions in total", ru.num(D.get("versions_total"), 0))]
+rows += [(f"Versions with status `{k}`", ru.num(v, 0)) for k, v in status_counts.items()]
+display(ru.kv_table(rows))
+ru.bar(list(status_counts), {"Versions": list(status_counts.values())},
+       "Versions by download status", "Number of versions", log_y=True)
+```
 
-The CSV contains 161,850 references in the `total_refs` column summed across papers, of which 77,034 are marked as arXiv-linked. The saved and metadata-complete counts for that arXiv-linked subset are also 77,034. The reported 100% completeness therefore applies to the **saved arXiv-linked subset**, not necessarily to every reference returned by Semantic Scholar or every bibliography entry in the original LaTeX sources.
+Status meaning: `ok` – TeX sources were downloaded and kept; `pdf_only`, `other_format` and `no_tex` – the version has no TeX source and is stored as an empty record;
+`error` – the download failed and will be retried by the next run.
 
-Two papers have the status `no_s2_record`. This is recorded as an explicit lookup outcome and should not be interpreted as proof that those papers have no references.
+```{code-cell} python
+:tags: [hide-input]
+vc = papers["versions"].value_counts().sort_index()
+ru.bar(vc.index.tolist(), {"Papers": vc.values.tolist()}, "Number of versions per paper", "Number of papers", log_y=True)
+```
 
-### 4.5 Errors and interpretation
+### 4.2 Success rates
 
-The aggregate results suggest that discovery and metadata collection are highly complete, while source availability is the main limitation for downstream LaTeX parsing. The key distinctions are:
+A paper counts as *scraped successfully* when no version failed to download, its metadata was written, and its references were crawled
+(or Semantic Scholar has no record of it).
 
-- **Paper-level success is not version-level success.** One paper can have several versions with different outcomes.
-- **Download success is not TeX availability.** PDF-only versions and versions with errors can prevent source parsing.
-- **Reference metadata completeness is scoped.** The 100% figure is calculated for saved arXiv-linked references and does not establish complete capture of all references.
-- **Missing values are not zeros.** Empty source-size fields are left as missing rather than being interpreted as zero bytes.
+```{code-cell} python
+:tags: [hide-input]
+n = D.get("papers_found")
+ok = D.get("papers_scraped_successfully")
+display(ru.kv_table([
+    ("Papers scraped successfully", f"{ru.num(ok, 0)} / {ru.num(n, 0)}"),
+    ("Overall success rate", ru.pct(D.get("overall_success_rate"))),
+    ("Download success rate (no failed version)", ru.pct(D.get("download_success_rate"))),
+    ("Papers whose every version has TeX sources", ru.pct(D.get("tex_coverage_rate"))),
+    ("Metadata success rate", ru.pct(D.get("metadata_success_rate"))),
+    ("References success rate", ru.pct(D.get("references_success_rate"))),
+    ("Papers without a Semantic Scholar record", ru.num(D.get("papers_without_s2_record"), 0)),
+]))
+```
 
-## 5. Performance and environment
+### 4.3 Paper size before and after removing figures
 
-### 5.1 Timing
+The size of a paper is the total size of the extracted files of all its versions.
 
-| Measure | Recorded value |
-|---|---:|
-| Summary wall time | 12.19 seconds |
-| Discovery step time | 0.00 seconds |
-| Average wall time per paper in summary | 0.002438 seconds |
-| Separate single-paper end-to-end trial | Not measured |
-| Fresh cold-start end-to-end benchmark | Not measured |
+```{code-cell} python
+:tags: [hide-input]
+b, a = D.get("avg_paper_bytes_before_cleanup"), D.get("avg_paper_bytes_after_cleanup")
+reduction = None if not b or a is None else 1 - a / b
+display(ru.kv_table([
+    ("Average paper size before removing figures (bytes)", ru.num(b, 0)),
+    ("Average paper size after removing figures (bytes)", ru.num(a, 0)),
+    ("Average paper size before / after (MiB)", f"{ru.num(ru.mb(b))} / {ru.num(ru.mb(a))}"),
+    ("Size reduction", ru.pct(reduction)),
+    ("Average version size before / after (bytes)",
+     f"{ru.num(D.get('avg_version_bytes_before_cleanup'), 0)} / {ru.num(D.get('avg_version_bytes_after_cleanup'), 0)}"),
+    ("Average compressed archive size per paper (bytes)", ru.num(D.get("avg_archive_bytes_per_paper"), 0)),
+]))
+ru.box(papers, {"bytes_before": "Before removing figures", "bytes_after": "After removing figures"},
+       "Distribution of paper size", "Bytes (all versions of a paper)", log_y=True)
+```
 
-Because the summary is explicitly marked `report_only: true` and `measured: false`, the 12.19-second figure should not be presented as the time required to crawl all 5,000 papers. Discovery is recorded as skipped/zero and the separate single-paper trial is absent. The per-paper average is therefore not a valid estimate of full processing cost for a new run.
+### 4.4 References
+
+A reference's metadata is *complete* when it has a title, authors, a submission date and a Semantic Scholar ID.
+The success rate is computed over the references that carry an arXiv ID, since only those become rows of the references table.
+
+```{code-cell} python
+:tags: [hide-input]
+ref_status = D.get("references_by_status") or {}
+rows = [
+    ("Average references per paper (returned by Semantic Scholar)", ru.num(D.get("avg_refs_per_paper"))),
+    ("Average references saved per paper", ru.num(D.get("avg_saved_refs_per_paper"))),
+    ("Average references with an arXiv ID per paper", ru.num(D.get("avg_arxiv_refs_per_paper"))),
+    ("Average per-paper success rate for reference metadata", ru.pct(D.get("avg_ref_metadata_success_rate_per_paper"))),
+    ("Overall success rate for reference metadata", ru.pct(D.get("ref_metadata_success_rate_overall"))),
+    ("References whose date came from Semantic Scholar", ru.num(D.get("refs_date_from_s2_total"), 0)),
+]
+rows += [(f"Papers with references status `{k}`", ru.num(v, 0)) for k, v in ref_status.items()]
+display(ru.kv_table(rows))
+ru.hist(papers["total_refs"], "References per paper", "Number of references", nbins=40)
+rate = papers["refs_metadata_ok"] / papers["refs_with_arxiv_id"].where(papers["refs_with_arxiv_id"] > 0)
+ru.hist(rate, "Per-paper success rate of reference metadata", "Success rate", nbins=20)
+```
+
+### 4.5 Error accounting and interpretation
+
+Download errors are version-level outcomes, whereas the overall success rate is publication-level. Several errors may belong to one publication. PDF-only and no-TeX versions count as completed download attempts but do not provide parsable TeX. A missing Semantic Scholar record is an explicit completed lookup, **not** a paper with verified reference coverage. The 100% reference-metadata score applies only to saved arXiv-linked references and does not establish completeness of all bibliographies.
+
+The saved average number of references is larger than the saved arXiv-linked subset. The current crawler can retain non-arXiv references too; the equality of saved-reference and arXiv-reference averages in this snapshot must not be interpreted as proof that every returned reference was retained.
+
+## 5. Performance
+
+### 5.1 Running time
+
+```{code-cell} python
+:tags: [hide-input]
+steps = {k: v for k, v in (T.get("steps_seconds") or {}).items() if k != "discover"}
+per_step = T.get("avg_seconds_per_paper_by_step") or {}
+trial = T.get("single_paper_trial") or {}
+display(ru.kv_table([
+    ("Recorded resumed-run wall time (not cold-start)", ru.duration(T.get("wall_seconds"))),
+    ("Resumed-run wall time / all discovered papers (not full processing time)", ru.quantity(T.get('avg_seconds_per_paper'), 's', 3)),
+    ("Total time to process one paper end to end (single-paper trial)",
+     f"{ru.num(trial.get('seconds'))} s" if trial else "not measured (benchmark.py --single-trial)"),
+    ("Discovery in recorded run", "Skipped; original discovery time not measured"),
+]))
+display(pd.DataFrame({
+    "Step": list(steps),
+    "Total time (s)": [round(v, 1) for v in steps.values()],
+    "Average per paper (s)": [ru.num(per_step.get(k), 4) for k in steps],
+}))
+ru.bar(list(steps), {"Total time (s)": list(steps.values())}, "Time spent in each step", "Seconds", log_y=True)
+```
 
 ### 5.2 Memory and disk
 
-| Measure | Result |
-|---|---:|
-| Peak RAM | Not measured |
-| Average RAM | Not measured |
-| Number of RAM samples | 0 |
-| Peak extra disk usage during the run | Not measured |
-| Final corpus size | 1,910,890,368 bytes |
-| Whole data directory size | 1,917,996,688 bytes |
+The benchmark's `final_corpus_bytes` sums all files under discovered publication folders, including metadata, references and any other outputs present at export time; it is not a measurement restricted to `.tex` and `.bib`. Filesystem-wide peak extra usage, if sampled, would also differ from an absolute corpus peak. Here that peak was not measured.
 
-The saved environment metadata reports Windows 11, Python 3.14.0, 16 CPU cores, and approximately 15.83 GiB of total RAM. These are environment details, not measured resource consumption by the crawler. A new instrumented run is needed to report peak/average RAM, peak temporary disk usage, and a valid end-to-end runtime. The example report's required Colab benchmark context should also be checked against the course requirements before submission.
+RAM is the total memory of the whole process tree (the driver and every program it starts), sampled periodically.
 
-## 6. Summary and next steps
+```{code-cell} python
+:tags: [hide-input]
+display(ru.kv_table([
+    (f"Peak RAM ({str(M.get('metric', '')).upper()}, MiB)", ru.num(ru.mb(M.get("peak_bytes")))),
+    ("Average RAM (MiB)", ru.num(ru.mb(M.get("avg_bytes")))),
+    ("Number of RAM samples", ru.num(M.get("samples"), 0)),
+    ("Maximum extra disk usage during the run (MiB)", ru.num(ru.mb(K.get("peak_extra_bytes_during_run")))),
+    ("Final corpus size (MiB)", ru.num(ru.mb(K.get("final_corpus_bytes")))),
+    ("Size of the whole data/ folder (MiB)", ru.num(ru.mb(K.get("data_dir_bytes")))),
+]))
+ru.line(samples["seconds"], samples["ram_mb"], "RAM usage over time", "Elapsed time (s)", "RAM (MiB)")
+if "disk_extra_mb" in samples:
+    ru.line(samples["seconds"], samples["disk_extra_mb"], "Extra disk usage over time", "Elapsed time (s)", "Disk (MiB)")
+```
 
-- The supplied corpus contains **5,000 papers and 6,101 versions**, with no IDs reported missing or failing discovery.
-- **4,978 papers (99.56%)** are marked as successfully scraped, and **4,698 papers (93.96%)** have TeX available.
-- Publication metadata is marked complete for all 5,000 papers; two papers lack a Semantic Scholar record.
-- The reported average paper size falls from approximately **4.61 MB to 0.40 MB**, a reduction of about **91.4%**.
-- The CSV records **77,034 saved arXiv-linked references**, all marked metadata-complete; this is not proof that every bibliography reference was retained.
-- The supplied export is report-only, so fresh timing and memory benchmarks remain outstanding.
+### 5.3 Windows environment — not the required Colab testbed
 
-**Recommended follow-up:** run the full crawler from a clean state with instrumentation enabled, capture per-step timings and process-tree RAM samples, measure peak temporary disk usage, and preserve the resulting run metadata. Then verify source coverage and reference retention before using the corpus for Milestone 2 parsing.
+The recorded Windows results do not satisfy the required final Google Colab CPU-only benchmark. Cold-start wall time, complete discovery time, peak/average RAM, a separately measured single-paper trial and peak required disk remain unavailable. [Colab benchmark protocol](colab_benchmarks.md) describes how to obtain new evidence without overwriting these exports.
+
+```{code-cell} python
+:tags: [hide-input]
+display(ru.kv_table([
+    ("Platform", R.get("platform")),
+    ("Python", R.get("python")),
+    ("CPU cores", R.get("cpu_count")),
+    ("Total RAM (GiB)", ru.num(ru.scale(R.get("total_ram_bytes"), 1024 ** 3))),
+    ("Measured at", R.get("created_at")),
+    ("Pipeline finished successfully", R.get("pipeline_success")),
+    ("Remaining errors", R.get("remaining_errors")),
+]))
+```
+
+## 6. Summary
+
+```{code-cell} python
+:tags: [hide-input]
+display(Markdown(f"""
+- **{ru.num(D.get('papers_found'), 0)}** papers with **{ru.num(D.get('versions_total'), 0)}** versions were discovered in the assigned range;
+  **{ru.num(D.get('papers_scraped_successfully'), 0)}** of them were scraped successfully (**{ru.pct(D.get('overall_success_rate'))}**).
+- Removing figure binaries reduced the average paper size from **{ru.num(ru.mb(D.get('avg_paper_bytes_before_cleanup')))} MiB**
+  to **{ru.num(ru.mb(D.get('avg_paper_bytes_after_cleanup')))} MiB**.
+- A paper has on average **{ru.num(D.get('avg_refs_per_paper'))}** references, **{ru.num(D.get('avg_arxiv_refs_per_paper'))}** of which carry an arXiv ID;
+  the metadata of **{ru.pct(D.get('ref_metadata_success_rate_overall'))}** of those references is complete.
+- The recorded resumed run took **{ru.duration(T.get('wall_seconds'))}**; peak RAM: **{ru.quantity(ru.mb(M.get('peak_bytes')), 'MiB')}**,
+  and the final corpus takes **{ru.num(ru.mb(K.get('final_corpus_bytes')))} MiB** on disk.
+"""))
+```

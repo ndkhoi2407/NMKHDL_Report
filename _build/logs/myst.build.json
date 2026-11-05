@@ -17,15 +17,13 @@
       "all": false,
       "doiBib": false,
       "watch": false,
-      "force": false,
+      "force": true,
       "checkLinks": false,
       "strict": false,
       "ci": false,
       "maxSizeWebp": 1572864,
       "keepHost": false
-    },
-    "performSiteBuild": true
+    }
   },
-  "exports": [],
-  "buildSite": true
+  "exports": []
 }

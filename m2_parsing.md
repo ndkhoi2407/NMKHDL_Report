@@ -225,7 +225,7 @@ ru.box(nonzero, {"elements_before_dedup": "Before deduplication", "elements_afte
 
 ## 5. Performance
 
-### 5.1 Running time and memory
+### 5.1 Running time and memory 
 
 The running time is the end-to-end wall time of the parser. The memory is the total RAM of the whole process tree (the main process and all its workers), sampled periodically.
 

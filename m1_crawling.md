@@ -9,8 +9,8 @@ kernelspec:
   name: python3
 ---
 
-**Full Name:** Nguyen Tien Thanh  
-**Student ID:** 24127121  
+**Full Name:** Nguyen Dang Khoi
+**Student ID:** 24127065  
 **Class:** 24KHDL1  
 **Group:** 09  
 ---

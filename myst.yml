@@ -8,7 +8,7 @@ project:
     - file: index.md
       url: /index
     - file: m1_crawling.md
-      /url: /m1_crawling
+      url: /m1_crawling
     - file: m2_parsing.md
 
 site:

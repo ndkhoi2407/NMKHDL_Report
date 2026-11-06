@@ -20,7 +20,7 @@ kernelspec:
 
 **Introduction to Data Science · University of Science, VNU-HCM (HCMUS) · Group 09**
 
-An auditable report on collecting versioned scientific sources and transforming LaTeX into reusable hierarchical data. The assigned range is `2607.03694–2607.08693`. Implementation descriptions are grounded in the included `src/` programs; every numerical result below comes from this project's small benchmark exports.
+An auditable report on collecting versioned scientific sources and transforming LaTeX into reusable hierarchical data. The assigned range is `2608.19007–2608.24006`. Implementation descriptions are grounded in the included `src/` programs; every numerical result below comes from this project's small benchmark exports.
 
 ```{important}
 Milestone 1 is a report-only corpus snapshot with timings from a resumed run; its peak RAM was not measured. Milestone 2 contains an instrumented parser run. “Not measured” is never replaced by zero. The site build reads only the small report exports and never starts a crawler or parser.

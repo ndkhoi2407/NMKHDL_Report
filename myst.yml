@@ -3,7 +3,11 @@ version: 1
 
 project:
   title: Data Science Project
-  description: Data collection and crawling — Milestone 1
+  description: Data Collection and Preprocessing
+  toc:
+    - file: index.md
+    - file: m1_crawling.md
+    - file: m2_parsing.md
 
 site:
   template: book-theme

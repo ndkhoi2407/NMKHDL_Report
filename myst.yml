@@ -5,9 +5,11 @@ project:
   title: Data Science Project
   description: Data Collection and Preprocessing
   toc:
-    - file: /index.md
-    - file: /m1_crawling.md
-    - file: /m2_parsing.md
+    - file: index.md
+      url: /index
+    - file: m1_crawling.md
+      /url: /m1_crawling
+    - file: m2_parsing.md
 
 site:
   template: book-theme
